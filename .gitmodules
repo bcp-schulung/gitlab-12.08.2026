@@ -1,0 +1,9 @@
+[submodule "ben-coeppicus"]
+	path = ben-coeppicus
+	url = https://gitlab.seminar.it-scholar.com/seminar/ben-coeppicus.git
+[submodule "david-darmann"]
+	path = david-darmann
+	url = https://gitlab.seminar.it-scholar.com/seminar/david-darmann.git
+[submodule "marko-liebrecht"]
+	path = marko-liebrecht
+	url = https://gitlab.seminar.it-scholar.com/seminar/marko-liebrecht.git
