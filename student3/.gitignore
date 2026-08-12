@@ -1,0 +1,5 @@
+# Virtuelle Umgebung, die der Lint-Job anlegt
+.venv/
+
+# Eigenes GitLab-Setup - gehoert nicht ins Schulungsrepo
+gitlab-docker/

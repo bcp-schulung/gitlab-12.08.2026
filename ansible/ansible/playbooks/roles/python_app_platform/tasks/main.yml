@@ -1,0 +1,39 @@
+---
+- name: Install Python runtime packages
+  ansible.builtin.apt:
+    name: "{{ python_app_platform_packages }}"
+    state: present
+
+- name: Create system group for hosted Python applications
+  ansible.builtin.group:
+    name: "{{ python_app_platform_system_group }}"
+    system: true
+    state: present
+
+- name: Create system user for hosted Python applications
+  ansible.builtin.user:
+    name: "{{ python_app_platform_system_user }}"
+    group: "{{ python_app_platform_system_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    home: "{{ python_app_platform_base_dir }}"
+    password: "*"
+    state: present
+
+- name: Create base directory for hosted Python applications
+  ansible.builtin.file:
+    path: "{{ python_app_platform_base_dir }}"
+    state: directory
+    owner: "{{ python_app_platform_system_user }}"
+    group: "{{ python_app_platform_system_group }}"
+    mode: "0750"
+
+- name: Install instantiated systemd unit template for Python applications
+  ansible.builtin.template:
+    src: python-app@.service.j2
+    dest: "/etc/systemd/system/{{ python_app_platform_systemd_unit_name }}@.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd daemon

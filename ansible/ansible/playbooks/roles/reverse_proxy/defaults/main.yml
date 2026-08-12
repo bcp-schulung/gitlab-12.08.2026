@@ -1,0 +1,9 @@
+---
+reverse_proxy_package: nginx
+reverse_proxy_client_max_body_size: 10m
+reverse_proxy_examples_dir: /etc/nginx/examples
+reverse_proxy_upstream_default_port: 8000
+
+# Directory scanned (via `include`) by the shared gateway server block for
+# per-app path-routing location blocks. Populated by the app_deploy role.
+reverse_proxy_apps_enabled_dir: /etc/nginx/apps-enabled

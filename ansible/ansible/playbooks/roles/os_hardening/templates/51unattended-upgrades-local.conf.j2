@@ -1,0 +1,6 @@
+// Managed by Ansible (os_hardening role).
+// Local overrides layered on top of the distribution's default
+// /etc/apt/apt.conf.d/50unattended-upgrades (which is left untouched).
+Unattended-Upgrade::Automatic-Reboot "{{ os_hardening_unattended_upgrades_auto_reboot | ternary('true', 'false') }}";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ os_hardening_unattended_upgrades_auto_reboot_time }}";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";

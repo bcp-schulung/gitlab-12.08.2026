@@ -1,0 +1,36 @@
+## Managed by Ansible (container_runtime role) - do not edit manually.
+##
+## Instantiated systemd service for running a containerized application via
+## the Docker CLI directly (no docker-compose). Mirrors the python-app@.service
+## pattern used for wheel-based deployments (see the python_app_platform role)
+## so both deployment methods are managed the same way.
+##
+## Usage (normally driven by the app_deploy role, not by hand):
+##   1. Write an environment file at {{ python_app_platform_base_dir | default('/opt/apps') }}/<app-name>/.env
+##      defining at least:
+##        IMAGE=registry.example.com/group/app:1.2.3
+##        HOST_PORT=8101
+##        CONTAINER_PORT=8000
+##   2. docker pull "$IMAGE" (the app_deploy role authenticates and pulls
+##      before this unit is (re)started).
+##   3. systemctl enable --now {{ container_runtime_systemd_unit_name }}@<app-name>.service
+##
+## Point an nginx reverse-proxy location block (see the reverse_proxy and
+## app_deploy roles) at 127.0.0.1:<HOST_PORT> to expose the app publicly.
+[Unit]
+Description=Containerized application (%i)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile={{ python_app_platform_base_dir | default('/opt/apps') }}/%i/.env
+ExecStartPre=-/usr/bin/docker rm -f %i
+ExecStart=/bin/sh -c 'exec /usr/bin/docker run --rm --name "%i" --env-file "{{ python_app_platform_base_dir | default('/opt/apps') }}/%i/.env" -p "127.0.0.1:${HOST_PORT}:${CONTAINER_PORT}" "$IMAGE"'
+ExecStop=-/usr/bin/docker stop -t 10 %i
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

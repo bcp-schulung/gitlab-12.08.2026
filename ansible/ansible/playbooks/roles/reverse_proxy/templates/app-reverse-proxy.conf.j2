@@ -1,0 +1,30 @@
+## Example reverse-proxy vhost for a Python application hosted via the
+## {{ python_app_platform_systemd_unit_name | default('python-app') }}@<app-name>.service
+## systemd template (see the python_app_platform role). This file is
+## installed with a .example suffix so nginx never loads it automatically.
+##
+## To use it for a real application:
+##   1. cp {{ reverse_proxy_examples_dir }}/python-app.conf.example /etc/nginx/sites-available/<app-name>.conf
+##   2. Replace <app-name> and <server-name> below, and set the proxy_pass
+##      port to match the app's PORT in its systemd .env file.
+##   3. ln -s /etc/nginx/sites-available/<app-name>.conf /etc/nginx/sites-enabled/
+##   4. nginx -t && systemctl reload nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name <server-name>;
+
+    access_log /var/log/nginx/<app-name>.access.log;
+    error_log  /var/log/nginx/<app-name>.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ reverse_proxy_upstream_default_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}

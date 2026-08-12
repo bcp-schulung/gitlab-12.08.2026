@@ -1,0 +1,18 @@
+## Managed by Ansible (reverse_proxy role) - do not edit manually.
+##
+## Shared HTTP gateway for all path-routed Python applications deployed via
+## the app_deploy role. Each application contributes its own location block
+## as a separate file under {{ reverse_proxy_apps_enabled_dir }}/<app-name>.conf
+## (see playbooks/roles/app_deploy) - do not add application location blocks
+## to this file directly, they will be overwritten by future role runs.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    include {{ reverse_proxy_apps_enabled_dir }}/*.conf;
+
+    location / {
+        return 404;
+    }
+}

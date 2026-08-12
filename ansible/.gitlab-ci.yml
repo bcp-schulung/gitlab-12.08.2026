@@ -1,0 +1,101 @@
+stages:
+  - lint
+  - deploy
+  - test
+  - notify
+
+ansible-lint:
+  stage: lint
+  script:
+    - python3 -m venv .venv-ansible-lint
+    - source .venv-ansible-lint/bin/activate
+    - pip install --upgrade pip
+    - pip install ansible ansible-lint
+    - ansible-lint ansible/playbooks
+  cache:
+    key: ansible-lint-venv
+    paths:
+      - .venv-ansible-lint/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "pipeline"
+      when: never
+    - changes:
+        - ansible/**/*
+        - .gitlab-ci.yml
+
+deploy:
+  stage: deploy
+  script:
+    - python3 -m venv .venv-ansible-deploy
+    - source .venv-ansible-deploy/bin/activate
+    - pip install --upgrade pip
+    - pip install ansible
+    - install -m 600 /dev/null "$CI_PROJECT_DIR/deploy_key"
+    - trap 'rm -f "$CI_PROJECT_DIR/deploy_key"' EXIT
+    - cp "$PRIVATE_KEY" "$CI_PROJECT_DIR/deploy_key"
+    - cd ansible
+    - ansible-playbook playbooks/ping.yml --private-key "$CI_PROJECT_DIR/deploy_key"
+  cache:
+    key: ansible-deploy-venv
+    paths:
+      - .venv-ansible-deploy/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "pipeline"
+      when: never
+    - changes:
+        - ansible/**/*
+        - .gitlab-ci.yml
+
+deploy-base-setup:
+  stage: deploy
+  script:
+    - python3 -m venv .venv-ansible-deploy
+    - source .venv-ansible-deploy/bin/activate
+    - pip install --upgrade pip
+    - pip install ansible
+    - install -m 600 /dev/null "$CI_PROJECT_DIR/deploy_key"
+    - trap 'rm -f "$CI_PROJECT_DIR/deploy_key"' EXIT
+    - cp "$PRIVATE_KEY" "$CI_PROJECT_DIR/deploy_key"
+    - cd ansible
+    - ansible-playbook playbooks/base_setup.yml --private-key "$CI_PROJECT_DIR/deploy_key"
+  cache:
+    key: ansible-deploy-venv
+    paths:
+      - .venv-ansible-deploy/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "pipeline"
+      when: never
+    - changes:
+        - ansible/**/*
+        - .gitlab-ci.yml
+      when: manual
+
+deploy-app:
+  stage: deploy
+  resource_group: "deploy-app-$APP_NAME"
+  variables:
+    # Bot account username backing the "DEPLOY_TOKEN" group access token
+    # (seminar group > Settings > Access Tokens). Not a secret - only the
+    # token value (DEPLOY_TOKEN_PASSWORD, a masked/protected CI/CD variable)
+    # is sensitive. Update this if the token is ever revoked/recreated.
+    GROUP_ACCESS_TOKEN_USERNAME: "group_4_bot_35e4071404ab5fe4aa5905f84cde3556"
+  script:
+    - python3 -m venv .venv-ansible-deploy
+    - source .venv-ansible-deploy/bin/activate
+    - pip install --upgrade pip
+    - pip install ansible
+    - install -m 600 /dev/null "$CI_PROJECT_DIR/deploy_key"
+    - trap 'rm -f "$CI_PROJECT_DIR/deploy_key"' EXIT
+    - cp "$PRIVATE_KEY" "$CI_PROJECT_DIR/deploy_key"
+    - cd ansible
+    - >-
+      ansible-playbook playbooks/deploy_app.yml
+      --private-key "$CI_PROJECT_DIR/deploy_key"
+      --extra-vars "app_name=$APP_NAME deploy_method=$DEPLOY_METHOD image=$IMAGE image_tag=$IMAGE_TAG ci_registry=$IMAGE_REGISTRY wheel_url=$WHEEL_URL registry_username=$GROUP_ACCESS_TOKEN_USERNAME registry_token=$DEPLOY_TOKEN_PASSWORD"
+  cache:
+    key: ansible-deploy-venv
+    paths:
+      - .venv-ansible-deploy/
+  rules:
+    - if: '$APP_NAME && $DEPLOY_METHOD'
+

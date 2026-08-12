@@ -1,0 +1,12 @@
+---
+# Static mapping of application name -> internal (loopback-only) port used
+# by the python_app_platform / container_runtime / app_deploy roles. The
+# port is never exposed directly to the internet - only nginx (reverse_proxy
+# role) proxies to it, via a per-app path prefix (see app_deploy role).
+#
+# Extend this map when onboarding a new student application; the key must
+# match the APP_NAME variable passed by that project's trigger-deploy-*-job.
+app_ports:
+  student1: 8101
+  student2: 8102
+  student3: 8103

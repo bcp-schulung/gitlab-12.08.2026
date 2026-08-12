@@ -1,0 +1,57 @@
+---
+# General baseline packages installed on every host, in addition to whatever
+# packages fail2ban/unattended-upgrades/ufw themselves require.
+os_hardening_packages:
+  - ca-certificates
+  - curl
+  - git
+  - vim
+  - htop
+  - unzip
+  - gnupg
+  - fail2ban
+  - unattended-upgrades
+  - ufw
+
+os_hardening_timezone: "Etc/UTC"
+
+# SSH hardening
+os_hardening_ssh_port: 22
+os_hardening_ssh_permit_root_login: prohibit-password
+os_hardening_ssh_password_authentication: false
+os_hardening_ssh_max_auth_tries: 3
+os_hardening_ssh_client_alive_interval: 300
+os_hardening_ssh_client_alive_count_max: 2
+
+# fail2ban
+os_hardening_fail2ban_bantime: 1h
+os_hardening_fail2ban_findtime: 10m
+os_hardening_fail2ban_maxretry: 5
+
+# unattended-upgrades - default to no automatic reboot so a security patch
+# can never unexpectedly restart the host without warning.
+os_hardening_unattended_upgrades_auto_reboot: false
+os_hardening_unattended_upgrades_auto_reboot_time: "03:00"
+
+# journald - cap disk usage of the persistent journal
+os_hardening_journald_max_use: 200M
+
+# swap - small cloud VMs benefit from a modest swap file
+os_hardening_enable_swap: true
+os_hardening_swap_file_path: /swapfile
+os_hardening_swap_size_mb: 1024
+os_hardening_swappiness: 10
+
+# Kernel/network sysctl hardening
+os_hardening_sysctl_settings:
+  net.ipv4.conf.all.accept_redirects: 0
+  net.ipv4.conf.default.accept_redirects: 0
+  net.ipv4.conf.all.send_redirects: 0
+  net.ipv4.conf.all.accept_source_route: 0
+  net.ipv4.conf.all.log_martians: 1
+  net.ipv4.icmp_echo_ignore_broadcasts: 1
+  net.ipv4.tcp_syncookies: 1
+  net.ipv6.conf.all.accept_redirects: 0
+  net.ipv6.conf.all.accept_source_route: 0
+  kernel.randomize_va_space: 2
+  fs.suid_dumpable: 0

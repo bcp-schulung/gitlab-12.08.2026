@@ -1,0 +1,10 @@
+---
+python_app_platform_packages:
+  - python3
+  - python3-venv
+  - python3-pip
+
+python_app_platform_system_user: pyapps
+python_app_platform_system_group: pyapps
+python_app_platform_base_dir: /opt/apps
+python_app_platform_systemd_unit_name: python-app

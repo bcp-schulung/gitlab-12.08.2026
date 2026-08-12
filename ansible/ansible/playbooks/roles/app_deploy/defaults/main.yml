@@ -1,0 +1,12 @@
+---
+app_deploy_base_dir: "{{ python_app_platform_base_dir }}"
+app_deploy_system_user: "{{ python_app_platform_system_user }}"
+app_deploy_system_group: "{{ python_app_platform_system_group }}"
+
+# Port the container's application process listens on inside the container
+# (matches the hello-app-template Dockerfile's EXPOSE/CMD --port).
+app_deploy_container_port: 8000
+
+# ASGI import path started by uvicorn for wheel-based deployments. All
+# student apps are derived from the same hello-app-template package.
+app_deploy_app_module: hello_app.main:app

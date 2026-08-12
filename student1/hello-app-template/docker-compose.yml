@@ -1,0 +1,28 @@
+---
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: hello-app:latest
+    container_name: hello-app
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - ENVIRONMENT=local
+      - APP_NAME=hello-app
+      - APP_VERSION=0.1.0
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:8000/health', timeout=5)
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

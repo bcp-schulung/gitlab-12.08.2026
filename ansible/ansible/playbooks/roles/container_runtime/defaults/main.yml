@@ -1,0 +1,5 @@
+---
+container_runtime_packages:
+  - docker.io
+
+container_runtime_systemd_unit_name: docker-app

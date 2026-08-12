@@ -1,0 +1,256 @@
+stages:
+  - lint
+  - build
+  - test
+  - sast
+  - release
+  - deploy
+  - smoke-test
+  - notify
+
+.venv:
+  before_script:
+    - python3 -m venv .venv
+    - . .venv/bin/activate
+
+.pytest:
+  before_script:
+    - !reference [.venv, before_script]
+    - cd hello-app-template
+    - pip install --quiet -e ".[dev]"
+
+lint-python:
+  stage: lint
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet ruff==0.14.0
+  script:
+    - echo "Prueft Python-Code auf Fehler und Formatierung"
+    - cd hello-app-template
+    - ruff check .
+    - ruff format --check .
+
+lint-compose:
+  stage: lint
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet yamllint==1.38.0
+  script:
+    - echo "Prueft die docker-compose.yml auf YAML-Stil"
+    - yamllint -d relaxed hello-app-template/docker-compose.yml
+
+build-python:
+  stage: build
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet build==1.5.0
+  script:
+    - echo "Baut aus dem Quellcode ein installierbares Python-Paket"
+    - cd hello-app-template
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION="${CI_COMMIT_TAG#v}"
+        sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
+        sed -i "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/hello_app/__init__.py
+        echo "Version aus Tag uebernommen: $VERSION"
+      else
+        echo "Kein Tag - Version bleibt wie in pyproject.toml"
+      fi
+    - python -m build
+    - ls -l dist
+  artifacts:
+    paths:
+      - hello-app-template/dist/
+    expire_in: 1 week
+
+build-image:
+  stage: build
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - echo "Baut das Docker-Image und legt es in die Registry"
+    - cd hello-app-template
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+  after_script:
+    - docker logout "$CI_REGISTRY"
+
+test-unit:
+  stage: test
+  before_script:
+    - !reference [.pytest, before_script]
+  script:
+    - echo "Prueft einzelne Bausteine isoliert"
+    - pytest tests/unit -v
+
+test-integration:
+  stage: test
+  before_script:
+    - !reference [.pytest, before_script]
+  script:
+    - echo "Prueft das Zusammenspiel ueber die App-Schnittstelle"
+    - pytest tests/integration -v
+
+test-e2e:
+  stage: test
+  before_script:
+    - !reference [.pytest, before_script]
+  script:
+    - echo "Prueft die App gegen einen echt laufenden Server"
+    - pytest tests/e2e -v
+
+sast-code:
+  stage: sast
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet bandit==1.9.4
+  script:
+    - echo "Sucht unsichere Muster im Python-Code"
+    - cd hello-app-template
+    - bandit -r src
+
+sast-deps:
+  stage: sast
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet pip-audit==2.10.1
+  script:
+    - echo "Prueft die Abhaengigkeiten auf bekannte Luecken"
+    - cd hello-app-template
+    - pip-audit .
+
+sast-image:
+  stage: sast
+  script:
+    - echo "Prueft das gebaute Image auf bekannte Luecken"
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.73.0 image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+  allow_failure: true
+
+sast-fs:
+  stage: sast
+  script:
+    - echo "Prueft die Repo-Dateien auf Luecken, Geheimnisse und Fehlkonfiguration"
+    - docker run --rm -v "$PWD:/src" aquasec/trivy:0.73.0 fs --scanners vuln,secret,misconfig --exit-code 1 /src
+
+release-image-job:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  dependencies: []
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - SEMVER="${CI_COMMIT_TAG#v}"
+    - docker pull "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:$SEMVER"
+    - docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$CI_REGISTRY_IMAGE:$SEMVER"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+  after_script:
+    - docker logout "$CI_REGISTRY"
+
+create-gitlab-release-job:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  needs:
+    - release-image-job
+    - build-python
+  dependencies:
+    - build-python
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - SEMVER="${CI_COMMIT_TAG#v}"
+    - export WHEEL_PATH=$(ls hello-app-template/dist/*.whl)
+    - export WHEEL_NAME=$(basename "$WHEEL_PATH")
+    - export WHEEL_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/hello-app/${SEMVER}/${WHEEL_NAME}"
+    - 'curl --fail --silent --show-error --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$WHEEL_PATH" "$WHEEL_URL"'
+    - PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+    - |
+      if [ -n "$PREV_TAG" ]; then
+        git log --oneline "${PREV_TAG}..${CI_COMMIT_SHA}" > /tmp/changelog.txt
+      else
+        git log --oneline -20 > /tmp/changelog.txt
+      fi
+    - |
+      python3 - <<'EOF'
+      import json, os
+      changelog = open('/tmp/changelog.txt').read().strip()
+      tag = os.environ['CI_COMMIT_TAG']
+      semver = tag.lstrip('v')
+      payload = {
+          'name': f'Release {tag}',
+          'tag_name': tag,
+          'description': changelog,
+          'assets': {
+              'links': [{
+                  'name': f"Python wheel {os.environ['WHEEL_NAME']}",
+                  'url': os.environ['WHEEL_URL'],
+                  'link_type': 'package'
+              }, {
+                  'name': f'Docker image :{semver}',
+                  'url': f"{os.environ['CI_SERVER_URL']}/{os.environ['CI_PROJECT_PATH']}/container_registry",
+                  'link_type': 'image'
+              }]
+          }
+      }
+      with open('/tmp/release-payload.json', 'w') as f:
+          json.dump(payload, f)
+      EOF
+    - 'curl --fail --silent --show-error --request POST --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --header "Content-Type: application/json" --data "@/tmp/release-payload.json" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"'
+    - echo "WHEEL_URL=$WHEEL_URL" > release.env
+  artifacts:
+    reports:
+      dotenv: release.env
+
+trigger-deploy-wheel-job:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: manual
+  allow_failure: false
+  needs:
+    - create-gitlab-release-job
+  variables:
+    APP_NAME: student3
+    DEPLOY_METHOD: wheel
+    WHEEL_URL: $WHEEL_URL
+  trigger:
+    project: seminar/ansible
+    branch: main
+    strategy: depend
+
+smoke-test-app:
+  stage: smoke-test
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  needs:
+    - trigger-deploy-wheel-job
+  variables:
+    SMOKE_URL: "http://178.104.159.122/student3"
+  script:
+    - echo "Prueft die deployte Anwendung von aussen"
+    - |
+      for i in $(seq 1 15); do
+        if curl -sf --max-time 5 "$SMOKE_URL/health" > health.json; then
+          echo "Anwendung antwortet nach $i Versuch(en)"
+          break
+        fi
+        echo "Noch keine Antwort - Versuch $i von 15"
+        sleep 2
+      done
+    - cat health.json
+    - grep -q '"status":"ok"' health.json
+    - grep -q '"healthy":true' health.json
+    - curl -sf --max-time 5 "$SMOKE_URL/" > root.json
+    - cat root.json
+    - grep -q "Student 3 App" root.json
+    - grep -q '"environment":"production"' root.json
+    - echo "Smoke-Test bestanden"
+
+notify-job:
+  stage: notify
+  script:
+    - echo "Stage notify - meldet das Ergebnis der Pipeline"
+    - echo "Spaeter hier - Nachricht verschicken, z.B. an ntfy oder per Mail"

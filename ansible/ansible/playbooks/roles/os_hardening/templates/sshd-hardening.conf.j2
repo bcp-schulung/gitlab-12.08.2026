@@ -1,0 +1,13 @@
+## Managed by Ansible (os_hardening role) - do not edit manually.
+## Placed in sshd_config.d so it overrides the distribution default
+## /etc/ssh/sshd_config, without having to template the whole file.
+
+PermitRootLogin {{ os_hardening_ssh_permit_root_login }}
+PasswordAuthentication {{ 'yes' if os_hardening_ssh_password_authentication else 'no' }}
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+X11Forwarding no
+AllowTcpForwarding no
+MaxAuthTries {{ os_hardening_ssh_max_auth_tries }}
+ClientAliveInterval {{ os_hardening_ssh_client_alive_interval }}
+ClientAliveCountMax {{ os_hardening_ssh_client_alive_count_max }}

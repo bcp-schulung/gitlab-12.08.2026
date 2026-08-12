@@ -1,0 +1,308 @@
+---
+stages:
+  - lint
+  - build
+  - test
+  - sast
+  - release
+  - deploy
+  - smoke-test
+  - notify
+
+variables:
+  TRIVY_NO_PROGRESS: "true"
+  TRIVY_CACHE_DIR: "$CI_PROJECT_DIR/.trivycache"
+  TRIVY_SEVERITY: "HIGH,CRITICAL"
+
+.venv:
+  before_script:
+    - python3 -m venv .venv
+    - source .venv/bin/activate
+
+format-check-job:
+  stage: lint
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet ruff
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template && ruff format --check .
+
+type-check-job:
+  stage: lint
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet --editable "./hello-app-template[dev]"
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template && mypy src
+
+lint-python-job:
+  stage: lint
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet ruff
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template && ruff check .
+
+yaml-lint-job:
+  stage: lint
+  image: python:3.12
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet yamllint
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template && yamllint docker-compose.yml
+
+build-python-job:
+  stage: build
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet build
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template && python -m build
+  artifacts:
+    paths:
+      - hello-app-template/dist/
+    expire_in: 1 hour
+
+build-image-job:
+  stage: build
+  before_script:
+    - >
+      echo "$CI_REGISTRY_PASSWORD"
+      | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - cd hello-app-template
+    - docker build --pull -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+
+unit-test-job:
+  stage: test
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet --editable "./hello-app-template[dev]"
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template && pytest tests/unit -v
+
+integration-test-job:
+  stage: test
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet --editable "./hello-app-template[dev]"
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template && pytest tests/integration -v
+
+e2e-test-job:
+  stage: test
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet --editable "./hello-app-template[dev]"
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template
+    - bash scripts/run_e2e.sh
+
+bandit-sast-job:
+  stage: sast
+  image: python:3.12
+  allow_failure: true
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet "bandit[sarif]"
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template
+    - bandit -r src -f sarif -o bandit-report.sarif || true
+    - bandit -r src -ll
+  artifacts:
+    when: always
+    reports:
+      sast: hello-app-template/bandit-report.sarif
+    paths:
+      - hello-app-template/bandit-report.sarif
+    expire_in: 1 week
+
+python-dependency-audit-job:
+  stage: sast
+  allow_failure: true
+  before_script:
+    - !reference [.venv, before_script]
+    - pip install --quiet pip-audit
+  script:
+    - source .venv/bin/activate
+    - cd hello-app-template
+    - pip-audit --format=json --output=pip-audit-report.json . || true
+    - pip-audit --desc=on .
+  artifacts:
+    when: always
+    paths:
+      - hello-app-template/pip-audit-report.json
+    expire_in: 1 week
+
+trivy-filesystem-job:
+  stage: sast
+  allow_failure: true
+  cache:
+    key: trivy-db
+    paths:
+      - .trivycache/
+  script:
+    - cd hello-app-template
+    - trivy filesystem --scanners vuln,secret,misconfig --format sarif --output trivy-fs-report.sarif . || true
+    - trivy filesystem --scanners vuln,secret,misconfig --severity "$TRIVY_SEVERITY" --exit-code 1 .
+  artifacts:
+    when: always
+    reports:
+      sast: hello-app-template/trivy-fs-report.sarif
+    paths:
+      - hello-app-template/trivy-fs-report.sarif
+    expire_in: 1 week
+
+trivy-image-job:
+  stage: sast
+  needs:
+    - build-image-job
+  allow_failure: true
+  cache:
+    key: trivy-db
+    paths:
+      - .trivycache/
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - cd hello-app-template
+    - docker pull "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - trivy image --format sarif --output trivy-image-report.sarif "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" || true
+    - trivy image --severity "$TRIVY_SEVERITY" --exit-code 1 "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+  artifacts:
+    when: always
+    reports:
+      sast: hello-app-template/trivy-image-report.sarif
+    paths:
+      - hello-app-template/trivy-image-report.sarif
+    expire_in: 1 week
+
+release-image-job:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  before_script:
+    - >
+      echo "$CI_REGISTRY_PASSWORD"
+      | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - SEMVER="${CI_COMMIT_TAG#v}"
+    - docker pull "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:$SEMVER"
+    - docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$CI_REGISTRY_IMAGE:$SEMVER"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+    - echo "IMAGE_TAG=$SEMVER" >> release-image.env
+  artifacts:
+    reports:
+      dotenv: release-image.env
+
+release-wheel-job:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  needs:
+    - build-python-job
+  script:
+    - SEMVER="${CI_COMMIT_TAG#v}"
+    - WHEEL_PATH=$(ls hello-app-template/dist/*.whl)
+    - WHEEL_NAME=$(basename "$WHEEL_PATH")
+    - WHEEL_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/hello-app/${SEMVER}/${WHEEL_NAME}"
+    - 'curl --fail --silent --show-error --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$WHEEL_PATH" "$WHEEL_URL"'
+    - echo "WHEEL_URL=$WHEEL_URL" >> release-wheel.env
+  artifacts:
+    reports:
+      dotenv: release-wheel.env
+
+create-gitlab-release-job:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  needs:
+    - release-image-job
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - SEMVER="${CI_COMMIT_TAG#v}"
+    - PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+    - |
+      if [ -n "$PREV_TAG" ]; then
+        git log --oneline "${PREV_TAG}..${CI_COMMIT_SHA}" > /tmp/changelog.txt
+      else
+        git log --oneline -20 > /tmp/changelog.txt
+      fi
+    - |
+      python3 - <<'EOF'
+      import json, os
+      changelog = open('/tmp/changelog.txt').read().strip()
+      tag = os.environ['CI_COMMIT_TAG']
+      semver = tag.lstrip('v')
+      payload = {
+          'name': f'Release {tag}',
+          'tag_name': tag,
+          'description': changelog,
+          'assets': {
+              'links': [{
+                  'name': f'Docker image :{semver}',
+                  'url': f"{os.environ['CI_SERVER_URL']}/{os.environ['CI_PROJECT_PATH']}/container_registry",
+                  'link_type': 'image'
+              }]
+          }
+      }
+      with open('/tmp/release-payload.json', 'w') as f:
+          json.dump(payload, f)
+      EOF
+    - |
+      curl --fail --silent --show-error \
+        --request POST \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --header "Content-Type: application/json" \
+        --data "@/tmp/release-payload.json" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
+
+trigger-deploy-image-job:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: manual
+  allow_failure: false
+  needs:
+    - release-image-job
+  variables:
+    APP_NAME: student1
+    DEPLOY_METHOD: image
+    IMAGE: $CI_REGISTRY_IMAGE
+    IMAGE_TAG: $IMAGE_TAG
+    IMAGE_REGISTRY: $CI_REGISTRY
+  trigger:
+    project: seminar/ansible
+    branch: main
+    strategy: depend
+
+trigger-deploy-wheel-job:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: manual
+  allow_failure: false
+  needs:
+    - release-wheel-job
+  variables:
+    APP_NAME: student1
+    DEPLOY_METHOD: wheel
+    WHEEL_URL: $WHEEL_URL
+  trigger:
+    project: seminar/ansible
+    branch: main
+    strategy: depend

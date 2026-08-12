@@ -1,0 +1,42 @@
+---
+- name: Validate required application deployment variables
+  ansible.builtin.assert:
+    that:
+      - app_name is defined and app_name | length > 0
+      - deploy_method in ['image', 'wheel']
+      - app_ports[app_name] is defined
+    fail_msg: >-
+      app_name must be set, deploy_method must be 'image' or 'wheel', and
+      app_name must have a matching entry in app_ports
+      (see inventory/group_vars/app_servers.yml).
+    quiet: true
+
+- name: Set application-specific facts
+  ansible.builtin.set_fact:
+    app_deploy_port: "{{ app_ports[app_name] }}"
+    app_deploy_dir: "{{ app_deploy_base_dir }}/{{ app_name }}"
+
+- name: Create application directory
+  ansible.builtin.file:
+    path: "{{ app_deploy_dir }}"
+    state: directory
+    owner: "{{ app_deploy_system_user }}"
+    group: "{{ app_deploy_system_group }}"
+    mode: "0750"
+
+- name: Deploy via container image
+  ansible.builtin.include_tasks: deploy_image.yml
+  when: deploy_method == 'image'
+
+- name: Deploy via Python wheel package
+  ansible.builtin.include_tasks: deploy_wheel.yml
+  when: deploy_method == 'wheel'
+
+- name: Install per-app nginx location block
+  ansible.builtin.template:
+    src: app-location.conf.j2
+    dest: "{{ reverse_proxy_apps_enabled_dir }}/{{ app_name }}.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx

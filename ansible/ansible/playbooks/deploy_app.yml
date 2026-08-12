@@ -1,0 +1,47 @@
+---
+# Deploys a single application - either a container image or a Python wheel
+# package - to the shared application host prepared by base_setup.yml.
+#
+# This playbook is invoked by the ansible-side deploy-app job in
+# .gitlab-ci.yml, which itself is triggered by a student project's
+# trigger-deploy-image-job or trigger-deploy-wheel-job (see e.g.
+# student1/.gitlab-ci.yml).
+#
+# Required extra vars (always passed by the CI job, empty string when not
+# applicable to the chosen deploy_method):
+#   app_name      - key in app_ports (inventory/group_vars/app_servers.yml)
+#   deploy_method - "image" or "wheel"
+#
+# Required when deploy_method == "image":
+#   image, image_tag, ci_registry, registry_username, registry_token
+#
+# Required when deploy_method == "wheel":
+#   wheel_url, registry_token
+#
+# registry_username/registry_token come from the ansible project's own
+# GROUP_ACCESS_TOKEN_USERNAME/GROUP_ACCESS_TOKEN CI/CD variables (masked +
+# protected), populated from a group access token created on the seminar
+# GROUP with read_registry + read_package_registry scopes. Because the
+# token is group-scoped, it can pull the container image / download the
+# generic package from any student project in the group without needing
+# a per-project CI/CD Job Token Allowlist entry.
+#
+# Auth mechanism differs by protocol: the container registry (docker login)
+# only supports HTTP Basic Auth, so it needs the token's associated bot
+# account username (registry_username) as well as the token itself; the
+# wheel download hits the REST/Packages API, which authenticates via a
+# PRIVATE-TOKEN header and needs only the token (registry_username is
+# unused for deploy_method=wheel).
+# GROUP_ACCESS_TOKEN_USERNAME is the bot user's username shown on the
+# group's Settings > Access Tokens page (NOT an arbitrary string).
+- name: Deploy application (container image or Python wheel)
+  hosts: app_servers
+  become: true
+  gather_facts: true
+
+  roles:
+    - python_app_platform
+    - reverse_proxy
+    - role: container_runtime
+      when: deploy_method == 'image'
+    - app_deploy

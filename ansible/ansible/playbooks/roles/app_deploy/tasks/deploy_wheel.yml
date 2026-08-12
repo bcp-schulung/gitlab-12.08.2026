@@ -1,0 +1,61 @@
+---
+- name: Validate required variables for wheel-based deployment
+  ansible.builtin.assert:
+    that:
+      - wheel_url is defined and wheel_url | length > 0
+      - registry_token is defined and registry_token | length > 0
+    fail_msg: "wheel_url and registry_token must both be set for deploy_method=wheel"
+    quiet: true
+
+- name: Set the local path for the downloaded wheel
+  ansible.builtin.set_fact:
+    app_deploy_wheel_path: "/tmp/{{ wheel_url | basename }}"
+
+- name: Download the application wheel package
+  ansible.builtin.get_url:
+    url: "{{ wheel_url }}"
+    dest: "{{ app_deploy_wheel_path }}"
+    headers:
+      PRIVATE-TOKEN: "{{ registry_token }}"
+    owner: "{{ app_deploy_system_user }}"
+    group: "{{ app_deploy_system_group }}"
+    mode: "0640"
+  no_log: true
+
+- name: Install the ASGI server into the app virtual environment
+  ansible.builtin.pip:
+    name: "uvicorn[standard]"
+    virtualenv: "{{ app_deploy_dir }}/.venv"
+    virtualenv_command: "python3 -m venv"
+    state: present
+  become: true
+  become_user: "{{ app_deploy_system_user }}"
+
+- name: Install the application wheel package into the app virtual environment
+  ansible.builtin.pip:
+    name: "{{ app_deploy_wheel_path }}"
+    virtualenv: "{{ app_deploy_dir }}/.venv"
+    virtualenv_command: "python3 -m venv"
+    state: forcereinstall
+  become: true
+  become_user: "{{ app_deploy_system_user }}"
+
+- name: Remove downloaded wheel file
+  ansible.builtin.file:
+    path: "{{ app_deploy_wheel_path }}"
+    state: absent
+
+- name: Write environment file for the systemd-managed application
+  ansible.builtin.template:
+    src: app-wheel.env.j2
+    dest: "{{ app_deploy_dir }}/.env"
+    owner: "{{ app_deploy_system_user }}"
+    group: "{{ app_deploy_system_group }}"
+    mode: "0640"
+
+- name: Enable and (re)start the wheel-based application service
+  ansible.builtin.systemd_service:
+    name: "{{ python_app_platform_systemd_unit_name }}@{{ app_name }}.service"
+    enabled: true
+    state: restarted
+    daemon_reload: true

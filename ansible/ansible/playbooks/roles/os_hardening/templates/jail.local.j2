@@ -1,0 +1,8 @@
+## Managed by Ansible (os_hardening role)
+[DEFAULT]
+bantime = {{ os_hardening_fail2ban_bantime }}
+findtime = {{ os_hardening_fail2ban_findtime }}
+maxretry = {{ os_hardening_fail2ban_maxretry }}
+
+[sshd]
+enabled = true
